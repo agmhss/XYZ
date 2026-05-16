@@ -8,7 +8,7 @@
 // ========================================================================
 const APP_CONFIG = {
     fullName: "XYZ School", 
-    shortName: "XYZ",                                           
+    shortName: "XYZ SCHOOL",                                           
     scriptUrl: "https://script.google.com/macros/s/AKfycbyJfcbZpYU1gBylfCZrfzVoOs3Ru3TA32ic8_jyB10wYsObvEOBFXmnN5R8xL1InpP51A/exec" 
 };
 
