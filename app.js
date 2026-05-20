@@ -683,6 +683,28 @@ window.exportPDF = function() {
         doc.setFontSize(14);
         doc.text(`${APP_CONFIG.shortName} Substitution Duty - ${selectedDate} (${day})`, 14, 15);
         doc.setFontSize(11);
+
+            // --- EXPORT PDF (With Subject Names in Visiting Cards) ---
+window.exportPDF = function() {
+    const { jsPDF } = window.jspdf;
+    const mode = document.getElementById('opMode').value;
+    const selectedDate = getSelectedDateStr();
+    
+    if (mode === 'exam') {
+        const doc = new jsPDF('l', 'mm', 'a4'); 
+        doc.setFontSize(14);
+        doc.text(`${APP_CONFIG.shortName} Exam Invigilation Schedule`, 14, 15);
+        doc.setFontSize(11);
+        doc.text(`Date: ${selectedDate} | Session: ${currentSession}`, 14, 25);
+        doc.text("Please use screenshot for Exam Duty Cards.", 14, 35);
+        doc.save(`${APP_CONFIG.shortName}_Exam_Schedule_${selectedDate}.pdf`);
+        
+    } else if (mode === 'substitution') {
+        const doc = new jsPDF('l', 'mm', 'a4'); 
+        const day = document.getElementById('subDay').value;
+        doc.setFontSize(14);
+        doc.text(`${APP_CONFIG.shortName} Substitution Duty - ${selectedDate} (${day})`, 14, 15);
+        doc.setFontSize(11);
         doc.text("Please use the 'Print' button on the screen.", 14, 25);
         doc.save(`${APP_CONFIG.shortName}_Sub_Schedule_${selectedDate}.pdf`);
         
@@ -691,7 +713,7 @@ window.exportPDF = function() {
         const filterVal = document.getElementById('viewFilter')?.value || '';
 
         // ==============================================================
-        // 🌟 NEW: VISITING CARD GENERATOR (All Teachers)
+        // 🌟 VISITING CARD GENERATOR (All Teachers)
         // ==============================================================
         if (viewType === 'all') {
             if (generatedWeeklyTimetable.length === 0) {
@@ -699,19 +721,18 @@ window.exportPDF = function() {
                 return;
             }
 
-            const doc = new jsPDF('p', 'mm', 'a4'); // Portrait mode for cards
+            const doc = new jsPDF('p', 'mm', 'a4'); 
             let allTeachers = [...new Set(SCHOOL_CONFIG.assignments.map(a => a.teacherName.replace('⭐ ', '')))].sort();
             
-            // Card Dimensions (90mm x 54mm) - Standard ID Card / Visiting Card Size
             const cW = 90; 
             const cH = 54; 
             const marginX = 10; 
             const marginY = 10; 
-            const gapY = 3; // Vertical gap for scissor cutting
+            const gapY = 3; 
             
             let cardsOnPage = 0;
             const teachingPeriods = SCHOOL_CONFIG.regularTimings.filter(p => p.type === 'class');
-            const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']; // Short day names
+            const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']; 
 
             allTeachers.forEach((teacher) => {
                 if (cardsOnPage === 10) { 
@@ -721,22 +742,22 @@ window.exportPDF = function() {
                 
                 let col = cardsOnPage % 2;
                 let row = Math.floor(cardsOnPage / 2);
-                let x = marginX + col * (cW + 10); // 10mm horizontal gap
+                let x = marginX + col * (cW + 10); 
                 let y = marginY + row * (cH + gapY);
 
-                // 1. Draw Card Border (To guide scissors)
+                // 1. Draw Card Border
                 doc.setDrawColor(180, 180, 180); 
                 doc.setLineWidth(0.3);
                 doc.rect(x, y, cW, cH);
 
-                // 2. Teacher Name & School Name Header
+                // 2. Teacher Name Header
                 doc.setFontSize(9); 
                 doc.setTextColor(0); 
                 doc.setFont("helvetica", "bold");
                 let displayName = teacher.length > 20 ? teacher.substring(0, 18) + "..." : teacher;
                 doc.text(`${APP_CONFIG.shortName} - ${displayName}`, x + 2, y + 5);
 
-                // 3. Build Miniature Table Data
+                // 3. Build Miniature Table Data (With Subjects!)
                 let head = [['Day', ...teachingPeriods.map((_, i) => i + 1)]];
                 let body = [];
                 
@@ -744,13 +765,19 @@ window.exportPDF = function() {
                     let rowData = [dayLabels[dIdx]];
                     teachingPeriods.forEach(period => {
                         let slot = generatedWeeklyTimetable.find(d => d.day === day && d.period === period.label && d.teacherName.replace('⭐ ', '') === teacher);
-                        // Show only Class Name (e.g. "10-A") to save space
-                        rowData.push(slot ? slot.className : '-'); 
+                        
+                        if (slot) {
+                            // 🌟 NEW: பாடத்தின் பெயரை 8 எழுத்துகளுக்குச் சுருக்கி கீழே காட்டுதல்
+                            let shortSub = slot.subjectName.length > 8 ? slot.subjectName.substring(0, 8) + '..' : slot.subjectName;
+                            rowData.push(`${slot.className}\n${shortSub}`);
+                        } else {
+                            rowData.push('-');
+                        }
                     });
                     body.push(rowData);
                 });
 
-                // 4. Print Miniature Table inside the Card
+                // 4. Print Miniature Table
                 doc.autoTable({
                     head: head, 
                     body: body,
@@ -759,15 +786,16 @@ window.exportPDF = function() {
                     tableWidth: cW - 4,
                     theme: 'grid',
                     styles: { 
-                        fontSize: 6.5,       // Very small font for visiting card
-                        cellPadding: 1, 
+                        fontSize: 5.5,       // 🌟 2 வரிகள் வருவதால் அளவு சற்று குறைக்கப்பட்டுள்ளது
+                        cellPadding: 0.8,    // 🌟 பேடிங் குறைக்கப்பட்டுள்ளது
                         halign: 'center', 
                         valign: 'middle', 
                         lineColor: [150, 150, 150], 
-                        lineWidth: 0.1 
+                        lineWidth: 0.1,
+                        overflow: 'linebreak' 
                     },
                     headStyles: { fillColor: [220, 220, 220], textColor: 20, fontStyle: 'bold' },
-                    columnStyles: { 0: { fontStyle: 'bold', fillColor: [245, 245, 245] } }
+                    columnStyles: { 0: { fontStyle: 'bold', fillColor: [245, 245, 245], cellWidth: 8 } }
                 });
                 
                 cardsOnPage++;
@@ -779,7 +807,7 @@ window.exportPDF = function() {
             // ==============================================================
             // SINGLE TIMETABLE LOGIC (Landscape Mode)
             // ==============================================================
-            const doc = new jsPDF('l', 'mm', 'a4'); // Landscape mode
+            const doc = new jsPDF('l', 'mm', 'a4'); 
             doc.setFontSize(16);
             doc.setTextColor(30, 58, 138); 
             doc.text(`${APP_CONFIG.shortName} Timetable - ${filterVal}`, 14, 18);
