@@ -1,6 +1,6 @@
 /**
  * app.js - Advanced Timetable, Exam & Substitution Engine
- * Features: Master Config (White-labeling), Level Segregation, Fallback Search, Strict Equal Duty
+ * Features: Master Config, Level Segregation, Smart Session Balancing, 1-Duty-Per-Day Exam Logic
  */
 
 // ========================================================================
@@ -47,12 +47,10 @@ function getTeacherCategory(gradeVal) {
 
 // --- UI EVENT LISTENERS & DYNAMIC UPDATES ---
 document.addEventListener('DOMContentLoaded', () => {
-    // 1. Dynamic Webpage Title & Header
     document.title = `${APP_CONFIG.shortName} - Timetable Engine`;
     const headerDisplay = document.getElementById('schoolNameDisplay');
     if(headerDisplay) headerDisplay.innerText = APP_CONFIG.fullName;
 
-    // 2. UI Elements
     const viewType = document.getElementById('viewType');
     const viewFilter = document.getElementById('viewFilter');
     const opMode = document.getElementById('opMode');
@@ -132,17 +130,15 @@ function generateAutoTimetable() {
     let teacherAvail = {};
     let classAvail = {};
     let dailySubjectCount = {}; 
-    let teacherSessionCount = {}; // NEW: காலை மற்றும் மதிய பீரியட் கணக்கீடு
+    let teacherSessionCount = {}; 
 
     if (!SCHOOL_CONFIG.assignments || SCHOOL_CONFIG.assignments.length === 0) return;
     const teachingPeriods = SCHOOL_CONFIG.regularTimings.filter(p => p.type === 'class');
     const firstPeriod = teachingPeriods[0];
     
-    // காலை (FN) மற்றும் மதியம் (AN) எவை என்பதை வரையறுத்தல்
     const fnPeriodLabels = teachingPeriods.slice(0, 4).map(p => p.label);
     const anPeriodLabels = teachingPeriods.slice(4, 8).map(p => p.label);
 
-    // Phase 1: Class Teachers Locked to Period 1
     SCHOOL_CONFIG.assignments.forEach(req => {
         req.assignedCount = 0; 
         if (req.isClassTeacher && firstPeriod) {
@@ -158,7 +154,6 @@ function generateAutoTimetable() {
                     if (!classAvail[req.className]) classAvail[req.className] = {};
                     classAvail[req.className][timeKey] = true;
                     
-                    // Session Tracker-ல் பதிவு செய்தல்
                     if (!teacherSessionCount[req.teacherName]) teacherSessionCount[req.teacherName] = {};
                     if (!teacherSessionCount[req.teacherName][day]) teacherSessionCount[req.teacherName][day] = { FN: 0, AN: 0 };
                     if (fnPeriodLabels.includes(firstPeriod.label)) teacherSessionCount[req.teacherName][day].FN++;
@@ -169,14 +164,11 @@ function generateAutoTimetable() {
         }
     });
 
-    // Phase 2: Distribute Remaining Periods (With Smart Spread)
     SCHOOL_CONFIG.assignments.forEach(req => {
         let remainingPeriods = req.periodsPerWeek - req.assignedCount;
         for (let i = 0; i < remainingPeriods; i++) {
             let placed = false;
             let preferredDayIndex = (i + req.assignedCount) % 5; 
-            
-            // முதல் சுற்றில் Strict விதியையும், இடமில்லையென்றால் தளர்வு விதியையும் (Fallback) பயன்படுத்தும் லாஜிக்
             let attemptLimits = [true, false]; 
             
             for (let strictMode of attemptLimits) {
@@ -192,7 +184,6 @@ function generateAutoTimetable() {
                             let countToday = dailySubjectCount[req.className]?.[checkDay]?.[req.subjectName] || 0;
                             if (countToday >= 2) continue; 
                             
-                            // --- SMART SESSION LIMIT LOGIC ---
                             let isFN = fnPeriodLabels.includes(period.label);
                             let isAN = anPeriodLabels.includes(period.label);
                             
@@ -201,12 +192,10 @@ function generateAutoTimetable() {
                             
                             let counts = teacherSessionCount[req.teacherName][checkDay];
                             
-                            // Strict Mode: காலையில் அதிகபட்சம் 3, மதியத்தில் அதிகபட்சம் 3
                             if (strictMode) {
-                                if (isFN && counts.FN >= 3) continue; // காலையில் கட்டாயம் 1 Free Period வேண்டும்
-                                if (isAN && counts.AN >= 3) continue; // மதியத்திலும் கட்டாயம் 1 Free Period வேண்டும்
+                                if (isFN && counts.FN >= 3) continue; 
+                                if (isAN && counts.AN >= 3) continue; 
                             }
-                            // ----------------------------------
                             
                             generatedWeeklyTimetable.push({
                                 day: checkDay, period: period.label, time: `${period.start} - ${period.end}`,
@@ -231,15 +220,12 @@ function generateAutoTimetable() {
                     }
                     if (placed) break; 
                 }
-                if (placed) break; // இடம் கிடைத்துவிட்டால் தளர்வு விதி லூப்பை (strictMode) விட்டு வெளியேற வேண்டும்
-            }
-            
-            if (!placed) {
-                console.warn(`Warning: Could not find a free slot for ${req.subjectName} in ${req.className}.`);
+                if (placed) break; 
             }
         }
     });
 }
+
 // --- RENDER 1: REGULAR TIMETABLE ---
 function renderRegularTimetable() {
     const mainGrid = document.getElementById('mainGrid');
@@ -298,23 +284,12 @@ function renderExamSchedule() {
     const mainGrid = document.getElementById('mainGrid');
     const selectedDate = getSelectedDateStr();
 
-    // =========================================================
-    // 🌟 NEW: DAILY SESSION TRACKER LOGIC
-    // =========================================================
-    // இந்தத் தேதிக்கு நினைவகம் இல்லையென்றால் புதிதாக உருவாக்கு
     if (!window.dailyExamTracker[selectedDate]) {
         window.dailyExamTracker[selectedDate] = { FN: [], AN: [] };
     }
-    
-    // Process பட்டனை மீண்டும் அழுத்தினால் கணக்கு இரட்டிப்பாகாமல் இருக்க இதை Reset செய்கிறோம்
     window.dailyExamTracker[selectedDate][currentSession] = [];
-
-    // தற்போதைய செஷனுக்கு எதிரான செஷன் எது? (FN என்றால் AN, AN என்றால் FN)
     const oppositeSession = currentSession === 'FN' ? 'AN' : 'FN';
-    
-    // இன்று மாற்று செஷனில் டியூட்டி பார்த்த ஆசிரியர்களின் பட்டியல்
     const busyInOtherSession = window.dailyExamTracker[selectedDate][oppositeSession];
-    // =========================================================
 
     const absentCheckboxes = document.querySelectorAll('.absent-chk:checked');
     const absentTeachers = Array.from(absentCheckboxes).map(cb => cb.value);
@@ -333,10 +308,9 @@ function renderExamSchedule() {
     let allTeachers = Object.keys(teacherProfiles);
     if (allTeachers.length === 0) return;
 
-    // --- FILTER 1: விடுப்பு எடுத்தவர்கள் மற்றும் மாற்று செஷனில் டியூட்டி பார்த்தவர்களை நீக்குதல் ---
     let presentTeachers = allTeachers.filter(t => 
         !absentTeachers.includes(t) && 
-        !busyInOtherSession.includes(t) // The Magic Rule!
+        !busyInOtherSession.includes(t) 
     );
 
     if (presentTeachers.length === 0) {
@@ -382,17 +356,14 @@ function renderExamSchedule() {
         
         let dutyTeacher = eligibleTeachers[0];
 
-        // --- FILTER 2: டியூட்டி பெற்றவரை தற்போதைய செஷனில் நிரந்தரமாகப் பதிவு செய்தல் ---
         window.dailyExamTracker[selectedDate][currentSession].push(dutyTeacher);
-        
-        // அடுத்த ஹாலுக்கு இவர் பெயர் மீண்டும் வராமல் இருக்க presentTeachers-ல் இருந்து நீக்குதல்
         presentTeachers = presentTeachers.filter(t => t !== dutyTeacher);
         
         let teacherCat = window.teacherLevels[dutyTeacher];
         tempExamTracker[dutyTeacher] = (tempExamTracker[dutyTeacher] || 0) + 1;
         let teacherLoad = window.teacherWorkload[dutyTeacher] || 0;
 
-        html += `
+      html += `
             <div class="p-5 border border-gray-200 rounded-xl bg-white shadow-sm hover:border-blue-400 transition-all relative overflow-hidden">
                 <div class="absolute top-0 left-0 w-full h-1 ${isJunior ? 'bg-green-400' : 'bg-blue-500'}"></div>
                 <div class="flex justify-between items-start mb-4 mt-1">
@@ -421,6 +392,7 @@ function renderExamSchedule() {
     if (window.lucide) window.lucide.createIcons();
     updateStatus("Exam Schedule Loaded (Strict 1-Duty-Per-Day Applied)");
 }
+
 // --- RENDER 3: SUBSTITUTION MANAGER (With Level Matching) ---
 function renderSubstituteSchedule() {
     const mainGrid = document.getElementById('mainGrid');
@@ -479,7 +451,6 @@ function renderSubstituteSchedule() {
 
         let freeTeachers = presentTeachers.filter(t => !busyThisPeriod.includes(t));
         
-        // 3-TIER SORTING LOGIC
         freeTeachers.sort((a, b) => {
             let aMatch = window.teacherLevels[a] === slotCategory ? 0 : 1;
             let bMatch = window.teacherLevels[b] === slotCategory ? 0 : 1;
@@ -549,7 +520,6 @@ window.syncFromCloud = async function() {
         const response = await fetch(SCRIPT_URL);
         const cloudData = await response.json();
 
-        // 1. Load Sub Duty Tracker
         window.subDutyTracker = {};
         if (cloudData.tracker && cloudData.tracker.length > 1) {
             cloudData.tracker.slice(1).forEach(row => {
@@ -568,14 +538,13 @@ window.syncFromCloud = async function() {
                 if (!teacherName) return; 
 
                 // --- BLOCK 1: முதல் வகுப்பு ஒதுக்கீடு (Columns B to F) ---
-                // Index: 1=Subject, 2=Class, 3=Section, 4=Periods, 5=Is CT?
                 let sub1 = String(row[1] || '').trim();
                 let cls1 = String(row[2] || '').trim();
                 let sec1 = String(row[3] || '').trim();
                 let per1 = parseInt(row[4]);
                 let isCT = String(row[5] || '').trim().toLowerCase() === 'yes';
 
-                                                   if (cls1 && !isNaN(per1) && per1 > 0) {
+                if (cls1 && !isNaN(per1) && per1 > 0) {
                     SCHOOL_CONFIG.assignments.push({
                         teacherName: teacherName,
                         subjectName: sub1,
@@ -589,25 +558,22 @@ window.syncFromCloud = async function() {
                     window.teacherMaxGrade[teacherName] = Math.max((window.teacherMaxGrade[teacherName] || 0), gVal1);
                 }
 
-                // --- BLOCKS 2 to N: அடுத்தடுத்த வகுப்புகள் (Columns G முதல்) ---
-                // Index 6-ல் தொடங்கி 4, 4 ஆகத் தாவிச் செல்லும் (Subject, Class, Section, Periods)
+                // --- BLOCKS 2 to N: அடுத்தடுத்த வகுப்புகள் ---
                 for (let i = 6; i < row.length; i += 4) {
                     let subN = String(row[i] || '').trim();
                     let clsN = String(row[i+1] || '').trim();
                     let secN = String(row[i+2] || '').trim();
                     let perN = parseInt(row[i+3]);
 
-                    // Total Load காலம் வந்துவிட்டாலோ அல்லது வகுப்பு இல்லை என்றாலோ லூப்பை நிறுத்தவும்
                     if (!clsN || clsN.toLowerCase() === 'total load') break; 
 
                     if (!isNaN(perN) && perN > 0) {
                         SCHOOL_CONFIG.assignments.push({
                             teacherName: teacherName,
-                            // ஒருவேளை Subject காலியாக விட்டிருந்தால், முதல் பாடத்தையே எடுத்துக்கொள்ளும்
                             subjectName: subN ? subN : sub1, 
                             className: clsN + "-" + secN,
                             periodsPerWeek: perN,
-                            isClassTeacher: false // Class Teacher பொறுப்பு முதல் பிளாக்கில் மட்டுமே வரும்
+                            isClassTeacher: false 
                         });
                         
                         window.teacherWorkload[teacherName] = (window.teacherWorkload[teacherName] || 0) + perN;
@@ -617,7 +583,6 @@ window.syncFromCloud = async function() {
                 }
             });
 
-            // 3. Level Classification (Primary / High / HrSec)
             window.teacherLevels = {};
             for (let t in window.teacherMaxGrade) {
                 window.teacherLevels[t] = getTeacherCategory(window.teacherMaxGrade[t]);
@@ -636,6 +601,7 @@ window.syncFromCloud = async function() {
         console.error("Cloud Error:", error);
     }
 };
+
 window.saveDutiesToCloud = async function() {
     updateStatus("Saving Duty Counts to Google Sheet...");
     const selects = document.querySelectorAll('select.w-full'); 
@@ -662,29 +628,7 @@ window.saveDutiesToCloud = async function() {
     }
 };
 
-// --- EXPORT PDF (With Master Visiting Card Generator & Landscape Mode) ---
-window.exportPDF = function() {
-    const { jsPDF } = window.jspdf;
-    const mode = document.getElementById('opMode').value;
-    const selectedDate = getSelectedDateStr();
-    
-    if (mode === 'exam') {
-        const doc = new jsPDF('l', 'mm', 'a4'); 
-        doc.setFontSize(14);
-        doc.text(`${APP_CONFIG.shortName} Exam Invigilation Schedule`, 14, 15);
-        doc.setFontSize(11);
-        doc.text(`Date: ${selectedDate} | Session: ${currentSession}`, 14, 25);
-        doc.text("Please use screenshot for Exam Duty Cards.", 14, 35);
-        doc.save(`${APP_CONFIG.shortName}_Exam_Schedule_${selectedDate}.pdf`);
-        
-    } else if (mode === 'substitution') {
-        const doc = new jsPDF('l', 'mm', 'a4'); 
-        const day = document.getElementById('subDay').value;
-        doc.setFontSize(14);
-        doc.text(`${APP_CONFIG.shortName} Substitution Duty - ${selectedDate} (${day})`, 14, 15);
-        doc.setFontSize(11);
-
-            // --- EXPORT PDF (With Subject Names in Visiting Cards) ---
+// --- EXPORT PDF (With Subject Names in Visiting Cards) ---
 window.exportPDF = function() {
     const { jsPDF } = window.jspdf;
     const mode = document.getElementById('opMode').value;
@@ -767,7 +711,6 @@ window.exportPDF = function() {
                         let slot = generatedWeeklyTimetable.find(d => d.day === day && d.period === period.label && d.teacherName.replace('⭐ ', '') === teacher);
                         
                         if (slot) {
-                            // 🌟 NEW: பாடத்தின் பெயரை 8 எழுத்துகளுக்குச் சுருக்கி கீழே காட்டுதல்
                             let shortSub = slot.subjectName.length > 8 ? slot.subjectName.substring(0, 8) + '..' : slot.subjectName;
                             rowData.push(`${slot.className}\n${shortSub}`);
                         } else {
@@ -786,8 +729,8 @@ window.exportPDF = function() {
                     tableWidth: cW - 4,
                     theme: 'grid',
                     styles: { 
-                        fontSize: 5.5,       // 🌟 2 வரிகள் வருவதால் அளவு சற்று குறைக்கப்பட்டுள்ளது
-                        cellPadding: 0.8,    // 🌟 பேடிங் குறைக்கப்பட்டுள்ளது
+                        fontSize: 5.5,       
+                        cellPadding: 0.8,    
                         halign: 'center', 
                         valign: 'middle', 
                         lineColor: [150, 150, 150], 
