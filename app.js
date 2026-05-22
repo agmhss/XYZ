@@ -12,6 +12,7 @@ const APP_CONFIG = {
     scriptUrl: "https://script.google.com/macros/s/AKfycbyJfcbZpYU1gBylfCZrfzVoOs3Ru3TA32ic8_jyB10wYsObvEOBFXmnN5R8xL1InpP51A/exec" 
 };
 
+
 const SCRIPT_URL = APP_CONFIG.scriptUrl;
 
 // --- Global Trackers ---
@@ -24,6 +25,7 @@ window.teacherWorkload = {};
 window.teacherLevels = {}; 
 window.teacherMaxGrade = {};
 window.dailyExamTracker = {}; 
+window.teacherPartTimeStatus = {}; // 🌟 NEW: ஆசிரியர்களின் நிரந்தர நேரக் கட்டுப்பாடு
 
 function updateStatus(msg) {
     const indicator = document.getElementById('statusIndicator');
@@ -47,13 +49,23 @@ function getTeacherCategory(gradeVal) {
     return 'Hr. Secondary';
 }
 
-// 🌟 Combined Class Splitter (உ.ம்: "11-A&B&B2" -> ["11-A", "11-B", "11-B2"])
 function getIndividualClasses(classNameStr) {
     let parts = String(classNameStr).split('-');
     if (parts.length < 2) return [String(classNameStr).trim()];
     let grade = parts[0].trim();
     let sections = parts[1].split(/[&,]/); 
     return sections.map(sec => `${grade}-${sec.trim()}`);
+}
+
+// 🌟 NEW: Global Part-Time Availability Checker
+function isPartTimeTeacherAvailable(teacherName, sessionType) {
+    let tName = String(teacherName).replace('⭐ ', '').trim();
+    let status = window.teacherPartTimeStatus[tName] || 'FULL';
+    
+    if (status === 'MORNING' && sessionType === 'AN') return false; 
+    if (status === 'AFTERNOON' && sessionType === 'FN') return false; 
+    
+    return true; 
 }
 
 // --- UI EVENT LISTENERS & DYNAMIC UPDATES ---
@@ -95,7 +107,6 @@ document.addEventListener('DOMContentLoaded', () => {
             let options = new Set();
             if (e.target.value === 'class') {
                 viewFilter.classList.remove('hidden');
-                // 🌟 Dropdown-ல் தனித்தனி செக்ஷன்களையும் காட்டுவதற்கான லாஜிக்
                 generatedWeeklyTimetable.forEach(slot => {
                     getIndividualClasses(slot.className).forEach(c => options.add(c));
                 });
@@ -138,7 +149,7 @@ window.generateGrid = function() {
     else if (mode === 'substitution') renderSubstituteSchedule();
 };
 
-// --- CORE TIMETABLE GENERATOR (Combined Classes + Smart Spread + 1st Period Lock) ---
+// --- CORE TIMETABLE GENERATOR ---
 function generateAutoTimetable() {
     generatedWeeklyTimetable = []; 
     let teacherAvail = {};
@@ -147,6 +158,14 @@ function generateAutoTimetable() {
     let teacherSessionCount = {}; 
 
     if (!SCHOOL_CONFIG.assignments || SCHOOL_CONFIG.assignments.length === 0) return;
+
+    SCHOOL_CONFIG.assignments.sort((a, b) => {
+        if (a.isClassTeacher !== b.isClassTeacher) return a.isClassTeacher ? -1 : 1;
+        let keyA = `${a.teacherName}-${a.className}-${a.subjectName}`;
+        let keyB = `${b.teacherName}-${b.className}-${b.subjectName}`;
+        return keyA.localeCompare(keyB);
+    });
+
     const teachingPeriods = SCHOOL_CONFIG.regularTimings.filter(p => p.type === 'class');
     const firstPeriod = teachingPeriods[0];
     
@@ -157,6 +176,13 @@ function generateAutoTimetable() {
     SCHOOL_CONFIG.assignments.forEach(req => {
         req.assignedCount = 0; 
         if (req.isClassTeacher && firstPeriod) {
+            
+            let isFN = fnPeriodLabels.includes(firstPeriod.label);
+            let sessionType = isFN ? 'FN' : 'AN';
+            
+            // 🌟 Global Part-Time Checker
+            if (!isPartTimeTeacherAvailable(req.teacherName, sessionType)) return;
+            
             let indClasses = getIndividualClasses(req.className);
 
             for (let day of daysOfWeek) {
@@ -179,7 +205,7 @@ function generateAutoTimetable() {
                     
                     if (!teacherSessionCount[req.teacherName]) teacherSessionCount[req.teacherName] = {};
                     if (!teacherSessionCount[req.teacherName][day]) teacherSessionCount[req.teacherName][day] = { FN: 0, AN: 0 };
-                    if (fnPeriodLabels.includes(firstPeriod.label)) teacherSessionCount[req.teacherName][day].FN++;
+                    if (isFN) teacherSessionCount[req.teacherName][day].FN++;
                     
                     req.assignedCount++;
                 }
@@ -206,16 +232,19 @@ function generateAutoTimetable() {
                         if (period.type === 'break' || period.type === 'fixed') continue; 
                         if (!req.isClassTeacher && period.label === firstPeriod.label) continue; 
 
+                        let isFN = fnPeriodLabels.includes(period.label);
+                        let isAN = anPeriodLabels.includes(period.label);
+                        let sessionType = isFN ? 'FN' : 'AN';
+
+                        // 🌟 Global Part-Time Checker
+                        if (!isPartTimeTeacherAvailable(req.teacherName, sessionType)) continue; 
+
                         let timeKey = `${checkDay}-${period.label}`;
                         let isClassBusy = indClasses.some(cls => classAvail[cls]?.[timeKey]);
                         
                         if (!teacherAvail[req.teacherName]?.[timeKey] && !isClassBusy) {
-                            
                             let countToday = dailySubjectCount[req.className]?.[checkDay]?.[req.subjectName] || 0;
-                            if (countToday >= 2) continue; 
-                            
-                            let isFN = fnPeriodLabels.includes(period.label);
-                            let isAN = anPeriodLabels.includes(period.label);
+                            if (countToday >= 6) continue; 
                             
                             if (!teacherSessionCount[req.teacherName]) teacherSessionCount[req.teacherName] = {};
                             if (!teacherSessionCount[req.teacherName][checkDay]) teacherSessionCount[req.teacherName][checkDay] = { FN: 0, AN: 0 };
@@ -285,9 +314,7 @@ function renderRegularTimetable() {
     teachingPeriods.forEach((p, index) => { html += `<th class="p-3 border border-blue-200"><div class="font-bold text-lg">${index + 1}</div></th>`; });
     html += `</tr></thead><tbody>`;
 
-    let displayData = generatedWeeklyTimetable;
-    
-    // 🌟 Combined Classes Support in UI Filter
+    let displayData = [];
     if (viewType === 'class') {
         displayData = generatedWeeklyTimetable.filter(d => getIndividualClasses(d.className).includes(filterVal));
     } else if (viewType === 'teacher') {
@@ -348,7 +375,8 @@ function renderExamSchedule() {
 
     let presentTeachers = allTeachers.filter(t => 
         !absentTeachers.includes(t) && 
-        !busyInOtherSession.includes(t) 
+        !busyInOtherSession.includes(t) &&
+        isPartTimeTeacherAvailable(t, currentSession) 
     );
 
     if (presentTeachers.length === 0) {
@@ -428,7 +456,7 @@ function renderExamSchedule() {
     html += `</div></div>`;
     mainGrid.innerHTML = html;
     if (window.lucide) window.lucide.createIcons();
-    updateStatus("Exam Schedule Loaded (Strict 1-Duty-Per-Day Applied)");
+    updateStatus("Exam Schedule Loaded");
 }
 
 // --- RENDER 3: SUBSTITUTION MANAGER ---
@@ -460,6 +488,8 @@ function renderSubstituteSchedule() {
     let allTeachers = [...new Set(SCHOOL_CONFIG.assignments.map(a => a.teacherName.replace('⭐ ', '')))];
     let presentTeachers = allTeachers.filter(t => !absentTeachers.includes(t));
 
+    const fnLabels = SCHOOL_CONFIG.regularTimings.slice(0, 4).map(p => p.label);
+
     let html = `<div class="mb-4 flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b pb-4">
                     <div>
                         <h3 class="font-black text-2xl text-red-700 uppercase tracking-tight">Substitution Register</h3>
@@ -482,12 +512,16 @@ function renderSubstituteSchedule() {
     vacantSlots.forEach(slot => {
         let slotGradeVal = getGradeValue(slot.className);
         let slotCategory = getTeacherCategory(slotGradeVal); 
+        let currentSlotSession = fnLabels.includes(slot.period) ? 'FN' : 'AN'; 
 
         let busyThisPeriod = generatedWeeklyTimetable
             .filter(s => s.day === day && s.period === slot.period)
             .map(s => s.teacherName.replace('⭐ ', ''));
 
-        let freeTeachers = presentTeachers.filter(t => !busyThisPeriod.includes(t));
+        let freeTeachers = presentTeachers.filter(t => 
+            !busyThisPeriod.includes(t) && 
+            isPartTimeTeacherAvailable(t, currentSlotSession) 
+        );
         
         freeTeachers.sort((a, b) => {
             let aMatch = window.teacherLevels[a] === slotCategory ? 0 : 1;
@@ -568,6 +602,8 @@ window.syncFromCloud = async function() {
         SCHOOL_CONFIG.assignments = [];
         window.teacherWorkload = {}; 
         window.teacherMaxGrade = {}; 
+        
+        let tempTeacherSubjects = {}; // 🌟 To check Part-Time Strings globally
 
         if (cloudData.assignments && cloudData.assignments.length > 1) {
             cloudData.assignments.slice(1).forEach(row => {
@@ -579,6 +615,9 @@ window.syncFromCloud = async function() {
                 let sec1 = String(row[3] || '').trim();
                 let per1 = parseInt(row[4]);
                 let isCT = String(row[5] || '').trim().toLowerCase() === 'yes';
+
+                if (!tempTeacherSubjects[teacherName]) tempTeacherSubjects[teacherName] = [];
+                if (sub1) tempTeacherSubjects[teacherName].push(sub1.toUpperCase());
 
                 if (cls1 && !isNaN(per1) && per1 > 0) {
                     SCHOOL_CONFIG.assignments.push({
@@ -602,10 +641,13 @@ window.syncFromCloud = async function() {
 
                     if (!clsN || clsN.toLowerCase() === 'total load') break; 
 
+                    let actualSubN = subN ? subN : sub1;
+                    if (actualSubN) tempTeacherSubjects[teacherName].push(actualSubN.toUpperCase());
+
                     if (!isNaN(perN) && perN > 0) {
                         SCHOOL_CONFIG.assignments.push({
                             teacherName: teacherName,
-                            subjectName: subN ? subN : sub1, 
+                            subjectName: actualSubN, 
                             className: clsN + "-" + secN,
                             periodsPerWeek: perN,
                             isClassTeacher: false 
@@ -618,9 +660,19 @@ window.syncFromCloud = async function() {
                 }
             });
 
+            // 🌟 Build Global Part Time Status & Category Levels
             window.teacherLevels = {};
+            window.teacherPartTimeStatus = {};
+            
             for (let t in window.teacherMaxGrade) {
                 window.teacherLevels[t] = getTeacherCategory(window.teacherMaxGrade[t]);
+                
+                let isMorn = tempTeacherSubjects[t]?.some(s => s.includes('PART TIME TEACHER MORNING'));
+                let isAft = tempTeacherSubjects[t]?.some(s => s.includes('PART TIME TEACHER AFTERNOON'));
+                
+                if (isMorn) window.teacherPartTimeStatus[t] = 'MORNING';
+                else if (isAft) window.teacherPartTimeStatus[t] = 'AFTERNOON';
+                else window.teacherPartTimeStatus[t] = 'FULL';
             }
             
             updateStatus("Generating Schedule...");
